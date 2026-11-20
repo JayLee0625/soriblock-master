@@ -228,46 +228,122 @@
     speechSynthesis.speak(u);
   }
 
-  // ---------- 음성 인식 ----------
-  var SRC = window.SpeechRecognition || window.webkitSpeechRecognition;
+  // ---------- 녹음 (앱이 직접 녹음 → 서버에서 구글 음성 인식) ----------
   var KAKAO = /KAKAOTALK/i.test(navigator.userAgent);
   var IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var HAS_MIC = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && !!(window.AudioContext || window.webkitAudioContext);
   function kakaoBar() {
     if (!KAKAO) return '';
-    return '<div class="kbar">카카오톡 안에서는 음성 인식이 안 될 수 있어요.<a href="kakaotalk://web/openExternal?url=' + encodeURIComponent(location.href) + '">다른 브라우저로 열기</a></div>';
+    return '<div class="kbar">카카오톡 안에서는 녹음이 안 될 수 있어요.<a href="kakaotalk://web/openExternal?url=' + encodeURIComponent(location.href) + '">다른 브라우저로 열기</a></div>';
   }
-  var rec = null;
-  function stopListen(abort) { if (rec) { var r = rec; if (abort) { r.__aborted = true; try { r.abort(); } catch (e) { } } else { try { r.stop(); } catch (e) { } } } }
-  function listen(onInterim) {
-    return new Promise(function (resolve, reject) {
-      var r;
-      try { r = new SRC(); } catch (e) { return reject('unsupported'); }
-      rec = r;
-      r.lang = 'en-US'; r.interimResults = true; r.maxAlternatives = 5; r.continuous = false;
-      var last = null, err = null, safety = setTimeout(function () { try { r.stop(); } catch (e) { } }, 15000);
-      r.onresult = function (e) {
-        var top = '';
-        for (var i = 0; i < e.results.length; i++) top += e.results[i][0].transcript;
-        var alts = e.results.length === 1 ? Array.prototype.map.call(e.results[0], function (a) { return a.transcript; }) : [top];
-        last = { top: top, alts: alts };
-        onInterim(top);
-      };
-      r.onerror = function (e) { err = e.error || 'error'; };
-      r.onend = function () {
-        clearTimeout(safety); if (rec === r) rec = null;
-        if (r.__aborted) return reject('aborted');
-        if (last && last.top.trim()) resolve([last.top].concat(last.alts)); else reject(err || 'no-speech');
-      };
-      try { r.start(); } catch (e) { clearTimeout(safety); rec = null; reject('start'); }
+  function sttOn() { return HAS_MIC && S.part && S.part.stt && S.part.stt.on; }
+  function sttOffNote() {
+    var r = S.part && S.part.stt && S.part.stt.reason;
+    var why = r === 'limit' ? '이번 달 음성 인식 무료 사용 시간을 다 써서 다음 달 1일에 다시 켜져요.' : r === 'admin' ? '지금은 관리자가 음성 인식을 꺼 두었어요.' : r === 'nokey' ? '음성 인식 설정이 아직 안 됐어요.' : !HAS_MIC ? '이 브라우저에서는 녹음이 안 돼요.' + (IOS ? ' (아이폰은 사파리에서 열어 주세요)' : '') : '';
+    return '<div class="note">' + why + ' 소리 내어 영어로 말한 뒤 <b>정답 보기</b>로 확인하고 스스로 채점해 주세요.</div>';
+  }
+  var WORKLET = 'class R extends AudioWorkletProcessor{constructor(){super();this.b=new Float32Array(2048);this.n=0}process(i){var c=i[0]&&i[0][0];if(c){for(var k=0;k<c.length;k++){this.b[this.n++]=c[k];if(this.n===2048){this.port.postMessage(this.b.slice(0));this.n=0}}}return true}}registerProcessor("rec-proc",R);';
+  var actx = null, workletReady = null, rec = null;
+  function ensureCtx() {
+    if (!actx) { var AC = window.AudioContext || window.webkitAudioContext; actx = new AC(); workletReady = null; }
+    if (actx.state === 'suspended') actx.resume().catch(function () { });
+    return actx;
+  }
+  // 마이크를 열고 소리 조각을 받아요. 끝나면 마이크를 바로 꺼서 원어민 소리가 작게 나오지 않게 해요
+  function startCapture(onChunk) {
+    var c = ensureCtx();
+    return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } }).then(function (stream) {
+      var src = c.createMediaStreamSource(stream), node;
+      function viaWorklet() {
+        if (!workletReady) workletReady = c.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })));
+        return workletReady.then(function () { node = new AudioWorkletNode(c, 'rec-proc'); node.port.onmessage = function (e) { onChunk(e.data); }; src.connect(node); node.connect(c.destination); });
+      }
+      function viaScript() {
+        node = c.createScriptProcessor(4096, 1, 1);
+        node.onaudioprocess = function (e) { onChunk(new Float32Array(e.inputBuffer.getChannelData(0))); };
+        src.connect(node); node.connect(c.destination);
+        return Promise.resolve();
+      }
+      return ((c.audioWorklet && window.AudioWorkletNode) ? viaWorklet().catch(viaScript) : viaScript()).then(function () {
+        return {
+          sr: c.sampleRate,
+          stop: function () {
+            try { src.disconnect(); } catch (e) { }
+            try { node.disconnect(); } catch (e) { }
+            if (node.port) node.port.onmessage = null; else node.onaudioprocess = null;
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            if (IOS) { try { c.close(); } catch (e) { } if (actx === c) { actx = null; workletReady = null; } }
+          }
+        };
+      }, function (e) { stream.getTracks().forEach(function (t) { t.stop(); }); throw e; });
     });
   }
+  // 말이 끝나면(1.1초 조용) 저절로 멈춰요. 버튼을 다시 눌러도 멈춰요
+  function recordOnce(onLevel) {
+    return new Promise(function (resolve, reject) {
+      var R = { chunks: [], db: [], sr: 48000, done: false, cap: null }, t0 = Date.now(), speechAt = -1, lastLoud = -1, noise = null;
+      rec = R;
+      function finish(why) {
+        if (R.done) return; R.done = true; if (rec === R) rec = null;
+        if (R.cap) R.cap.stop();
+        if (why === 'abort') return reject('aborted');
+        if (speechAt < 0) return reject('no-speech');
+        resolve(R);
+      }
+      R.stop = function () { finish('user'); };
+      R.abort = function () { finish('abort'); };
+      startCapture(function (x) {
+        if (R.done) return;
+        R.chunks.push(x);
+        var e = 0; for (var i = 0; i < x.length; i++) e += x[i] * x[i];
+        var db = 10 * Math.log10(e / x.length + 1e-10), k = R.chunks.length - 1, t = (Date.now() - t0) / 1000;
+        R.db.push(db);
+        if (k < 6) { noise = noise === null ? db : Math.min(noise, db); }
+        var thr = Math.max((noise === null ? -60 : noise) + 12, -50);
+        if (db > thr) { if (speechAt < 0 && k >= 2) speechAt = k; lastLoud = t; }
+        if (onLevel) onLevel(Math.max(0, Math.min(1, (db + 60) / 45)));
+        if (speechAt >= 0 && t - lastLoud > 1.1) finish('silence');
+        else if (speechAt < 0 && t > 7) finish('quiet');
+        else if (t > 15) finish('max');
+      }).then(function (cap) { R.cap = cap; R.sr = cap.sr; if (R.done) cap.stop(); }, function (e) {
+        R.done = true; if (rec === R) rec = null;
+        reject(e && (e.name === 'NotAllowedError' || e.name === 'SecurityError') ? 'not-allowed' : (e && e.name === 'NotFoundError' ? 'audio-capture' : 'start'));
+      });
+    });
+  }
+  function stopListen(abort) { if (rec) { if (abort) rec.abort(); else rec.stop(); } }
+  // 녹음 → 16kHz로 줄이고 앞뒤 조용한 부분은 잘라서(사용 시간 절약) base64로
+  function toPcm16(R) {
+    var n = 0, i, j; R.chunks.forEach(function (c) { n += c.length; });
+    var all = new Float32Array(n), o = 0; R.chunks.forEach(function (c) { all.set(c, o); o += c.length; });
+    var per = R.chunks.length ? R.chunks[0].length : 2048, thr = -50, first = -1, last = -1, noise = Math.min.apply(null, R.db.slice(0, 6).concat([0]));
+    thr = Math.max(noise + 12, -50);
+    for (i = 0; i < R.db.length; i++) if (R.db[i] > thr) { if (first < 0) first = i; last = i; }
+    var a = Math.max(0, (first - 6) * per), b = Math.min(n, (last + 9) * per);
+    var ratio = R.sr / 16000, m = Math.floor((b - a) / ratio), out = new Int16Array(m), half = Math.max(1, Math.floor(ratio / 2));
+    for (i = 0; i < m; i++) {
+      var c0 = a + Math.floor(i * ratio), sum = 0, cnt = 0;
+      for (j = c0 - half; j <= c0 + half; j++) if (j >= a && j < b) { sum += all[j]; cnt++; }
+      var v = Math.max(-1, Math.min(1, sum / Math.max(1, cnt)));
+      out[i] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+    }
+    var u8 = new Uint8Array(out.buffer), bin = '';
+    for (i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    return { b64: btoa(bin), sec: m / 16000 };
+  }
+  // 고유명사(도시·사람 이름)만 인식 힌트로 줘요. 정답 문장 전체를 주면 틀리게 말해도 맞게 들려서요
+  function hintsOf(s) {
+    var out = [];
+    answersOf(s).forEach(function (a) { a.split(/\s+/).forEach(function (w, i) { var x = w.replace(/[^A-Za-z'-]/g, ''); if (i > 0 && /^[A-Z][a-z]/.test(x) && out.indexOf(x) < 0) out.push(x); }); });
+    return out.slice(0, 10);
+  }
   function srMessage(code) {
-    if (code === 'not-allowed' || code === 'service-not-allowed') return '마이크나 음성 인식이 허용되지 않았어요. 브라우저에서 마이크를 허용해 주세요.' + (IOS ? ' 아이폰은 설정에서 ‘받아쓰기’가 켜져 있어야 할 수 있어요.' : '');
-    if (code === 'no-speech') return '말소리가 들리지 않았어요. 버튼을 누르고 바로 말해 주세요.';
-    if (code === 'network') return '음성 인식 서버에 연결하지 못했어요. 인터넷을 확인해 주세요.';
+    if (code === 'not-allowed') return '마이크 사용이 허용되지 않았어요. 주소창의 ‘가가’ 버튼(아이폰) 또는 자물쇠 버튼에서 마이크를 허용해 주세요.';
+    if (code === 'no-speech') return '말소리가 들리지 않았어요. 버튼을 누르고 바로 또박또박 말해 주세요.';
     if (code === 'audio-capture') return '마이크를 찾지 못했어요.';
     if (code === 'aborted') return '';
-    return '음성 인식이 잘 안 됐어요. 다시 해 보거나 ‘정답 보기’로 스스로 채점해 주세요.';
+    if (code === 'start') return '녹음을 시작하지 못했어요. 다시 눌러 주세요.';
+    return String(code || '음성 인식이 잘 안 됐어요.') + ' ‘정답 보기’로 스스로 채점할 수 있어요.';
   }
 
   // ---------- 채점 ----------
@@ -334,12 +410,12 @@
     h += kakaoBar();
     h += '<div class="card"><div class="tags" style="margin-top:0"><span class="tag">' + esc(s.expr || Q.title) + '</span>' + (isWrong(s) ? '<span class="pill bad" style="height:22px">다시 볼 문장</span>' : '') + '</div>' +
       '<div class="ko">' + esc(s.ko) + '</div><div class="hintline" id="hl">' + hintHtml(s, st.hint) + '</div>';
-    if (st.mode === 'ask' || st.mode === 'listen') {
-      if (SRC) {
-        h += '<div class="micwrap"><button class="mic' + (st.mode === 'listen' ? ' rec' : '') + '" id="mic" aria-label="말하기">' + (st.mode === 'listen' ? IC.stop : IC.mic) + '</button>' +
-          '<div class="live" id="live">' + (st.mode === 'listen' ? '듣고 있어요… 영어로 말해 보세요' : (st.msg ? esc(st.msg) : '버튼을 누르고 영어로 말해 보세요')) + '</div></div>';
+    if (st.mode === 'ask' || st.mode === 'listen' || st.mode === 'busy') {
+      if (sttOn()) {
+        h += '<div class="micwrap"><button class="mic' + (st.mode === 'listen' ? ' rec' : '') + '" id="mic" aria-label="말하기"' + (st.mode === 'busy' ? ' disabled' : '') + '><span class="lvl" id="lvl"></span>' + (st.mode === 'listen' ? IC.stop : (st.mode === 'busy' ? '<span class="spin"></span>' : IC.mic)) + '</button>' +
+          '<div class="live" id="live">' + (st.mode === 'listen' ? '듣고 있어요… 다 말하면 저절로 멈춰요' : st.mode === 'busy' ? '내가 말한 문장을 글자로 바꾸는 중…' : (st.msg ? esc(st.msg) : '버튼을 누르고 영어로 말해 보세요')) + '</div></div>';
       } else {
-        h += '<div class="note">이 브라우저에서는 음성 인식이 안 돼요. 소리 내어 영어로 말한 뒤 <b>정답 보기</b>로 확인하고 스스로 채점해 주세요.' + (IOS ? ' (아이폰은 사파리에서 열어 주세요)' : '') + '</div>';
+        h += sttOffNote();
       }
       h += '<div class="subbtns"><button id="hint">' + IC.bulb + '힌트</button><button id="peek">' + IC.eye + '정답 보기</button></div></div>';
     } else if (st.mode === 'result') {
@@ -355,12 +431,12 @@
         '<div class="subbtns"><button id="pl">' + IC.play + '원어민 듣기</button><button id="sl">' + IC.slow + '천천히</button></div>' +
         '<div class="small muted" style="margin:14px 2px 8px">말한 문장이 정답과 같았나요?</div>' +
         '<div class="nav"><button class="btn bad" id="selfX">틀렸어요</button><button class="btn" id="selfO">맞혔어요</button></div>' +
-        (SRC ? '<button class="btn sec" id="again" style="margin-top:8px">' + IC.mic + '정답 보고 따라 말해 보기</button>' : '') + '</div>';
+        (sttOn() ? '<button class="btn sec" id="again" style="margin-top:8px">' + IC.mic + '정답 보고 따라 말해 보기</button>' : '') + '</div>';
     }
     app.innerHTML = h;
     document.getElementById('bk').onclick = function () { if (Q.res.length) finish(); else history.back(); };
     var mic = document.getElementById('mic');
-    if (mic) mic.onclick = function () { if (st.mode === 'listen') stopListen(false); else doListen(); };
+    if (mic) mic.onclick = function () { if (st.mode === 'listen') stopListen(false); else if (st.mode !== 'busy') doListen(); };
     var hb = document.getElementById('hint');
     if (hb) hb.onclick = function () { st.hint = Math.min(st.hint + 1, s.en.split(/\s+/).length); document.getElementById('hl').innerHTML = hintHtml(s, st.hint); };
     var pk = document.getElementById('peek');
@@ -385,19 +461,29 @@
   function doListen() {
     var Q = S.sess, st = Q.st, s = curS();
     stopPlay();
-    st.mode = 'listen'; render();
-    listen(function (t) { var lv = document.getElementById('live'); if (lv) lv.textContent = t; }).then(function (cands) {
+    st.mode = 'listen'; st.msg = ''; render();
+    var lvl = document.getElementById('lvl');
+    recordOnce(function (v) { if (lvl) lvl.style.transform = 'scale(' + (1 + v * 0.45).toFixed(3) + ')'; }).then(function (R) {
       if (S.screen !== 'practice' || curS() !== s) return;
-      var j = judge(s, cands);
-      if (!j) { st.mode = 'ask'; st.msg = srMessage('no-speech'); render(); return; }
-      st.tries++; st.j = j; st.mode = 'result';
-      if (!st.practiceOnly) record(s, j.v, j.said, j.score, 'sr');
-      render();
-      if (j.v === 'O') { var pl = document.getElementById('pl'); if (pl) playSentence(s, 1, pl); }
+      var pcm = toPcm16(R);
+      st.mode = 'busy'; render();
+      return call('recognize', { coach: S.coach, id: s.id, audio: pcm.b64, hint: hintsOf(s) }).then(function (r) {
+        if (S.screen !== 'practice' || curS() !== s) return;
+        if (r.stt) S.part.stt = r.stt;
+        if (r.off) { st.mode = 'ask'; st.msg = ''; render(); toast(r.off === 'limit' ? '이번 달 음성 인식 무료 사용 시간을 다 써서 스스로 채점으로 바뀌었어요.' : '음성 인식이 꺼져 있어서 스스로 채점으로 바뀌었어요.', 4000); return; }
+        var cands = [r.text].concat(r.alts || []).filter(function (x) { return x && x.trim(); });
+        var j = cands.length ? judge(s, cands) : null;
+        if (!j) { st.mode = 'ask'; st.msg = srMessage('no-speech'); render(); return; }
+        st.tries++; st.j = j; st.mode = 'result';
+        if (!st.practiceOnly) record(s, j.v, j.said, j.score, 'sr');
+        render();
+        if (j.v === 'O') { var pl = document.getElementById('pl'); if (pl) playSentence(s, 1, pl); }
+      });
     }).catch(function (code) {
       if (S.screen !== 'practice' || curS() !== s) return;
-      st.mode = 'ask'; st.msg = srMessage(code); st.fails = (st.fails || 0) + 1;
-      if (st.fails >= 2 && code !== 'aborted') st.msg += ' ‘정답 보기’로 스스로 채점할 수도 있어요.';
+      var msg = typeof code === 'string' ? srMessage(code) : srMessage((code && code.message) || '');
+      st.mode = 'ask'; st.msg = msg; st.fails = (st.fails || 0) + 1;
+      if (st.fails >= 2 && code !== 'aborted' && msg.indexOf('정답 보기') < 0) st.msg += ' ‘정답 보기’로 스스로 채점할 수도 있어요.';
       render();
     });
   }
@@ -514,6 +600,15 @@
         '<label class="f">하루 목표 문장 수</label><input id="goal" type="number" inputmode="numeric" min="5" max="100" value="' + (st.goal || 20) + '">' +
         '<button class="btn" id="saveSet" style="margin-top:14px">설정 저장</button>' +
         '<p class="small muted" style="margin:10px 0 0">목소리나 속도를 바꾸면 ‘문장’ 탭에서 AI 음성을 다시 만들어야 해요.</p></div>';
+      var su = AD.stt || { usedSec: 0, limitSec: 3600, count: 0, reason: '' }, mm = function (x) { x = Math.round(x); return Math.floor(x / 60) + '분 ' + (x % 60) + '초'; };
+      h += '<div class="card"><b>말한 영어 글자로 보기 (음성 인식)</b><div class="small muted" style="margin:4px 0 10px">코치가 말하면 구글 음성 인식으로 글자로 바꿔 채점해요. 한 달 한도를 넘으면 그달에는 자동으로 꺼지고, 스스로 채점으로 바뀌어요. 다음 달 1일에 다시 켜져요.</div>' +
+        '<label class="swrow"><input type="checkbox" id="sttOn"' + (st.sttOn === false ? '' : ' checked') + '><span>음성 인식 켜기</span></label>' +
+        '<label class="f">한 달 사용 한도 (분)</label><input id="sttLim" type="number" inputmode="numeric" min="1" value="' + (st.sttLimit || 60) + '">' +
+        '<div class="small" style="margin-top:12px"><b>이번 달 사용</b> ' + mm(su.usedSec) + ' / ' + Math.round(su.limitSec / 60) + '분 · ' + su.count + '번</div>' +
+        '<div class="prog"><i style="width:' + Math.min(100, Math.round(su.usedSec / Math.max(1, su.limitSec) * 100)) + '%' + (su.usedSec >= su.limitSec ? ';background:var(--bad)' : '') + '"></i></div>' +
+        '<div class="small ' + (su.reason ? '' : 'muted') + '" style="color:' + (su.reason ? 'var(--bad)' : '') + '">' + (su.reason === 'limit' ? '한도에 닿아서 지금은 꺼져 있어요. 다음 달 1일에 다시 켜져요.' : su.reason === 'admin' ? '지금 꺼져 있어요.' : su.reason === 'nokey' ? 'API 키를 먼저 등록해 주세요.' : '지금 켜져 있어요.') + '</div>' +
+        '<button class="btn" id="saveStt" style="margin-top:12px">음성 인식 설정 저장</button>' +
+        '<p class="small muted" style="margin:10px 0 0">구글의 무료 60분은 결제 계정 전체 기준이에요. 구글 클라우드에서 ‘Cloud Speech-to-Text API’를 켜 두어야 해요.</p></div>';
     } else {
       h += '<div class="card"><b>코치 추가</b><div class="row" style="margin-top:10px"><input id="cn" placeholder="이름"><button class="btn sm" id="addC" style="flex:none">추가</button></div></div>';
       h += '<div class="card" style="padding:6px 16px">' + (AD.coaches.length ? AD.coaches.map(function (c) { return '<div class="sl"><span class="tx">' + esc(c) + '</span><button class="btn sm sec" style="flex:none" data-rc="' + esc(c) + '">삭제</button></div>'; }).join('') : '<div class="empty">등록된 코치가 없어요.</div>') + '</div>';
@@ -533,6 +628,9 @@
         var on = app.querySelector('[data-vs].on'), voice = on ? on.getAttribute('data-vs') : st.voice, rate = +document.getElementById('rt').value;
         var changed = voice !== st.voice || rate !== +st.rate;
         done(call('adminSettings', { pin: S.pin, voice: voice, rate: rate, goal: +document.getElementById('goal').value }), changed ? '저장했어요. ‘문장’ 탭에서 AI 음성을 다시 만들어 주세요.' : '설정을 저장했어요');
+      };
+      document.getElementById('saveStt').onclick = function () {
+        done(call('adminSettings', { pin: S.pin, voice: st.voice, rate: st.rate, goal: st.goal, sttOn: document.getElementById('sttOn').checked, sttLimit: +document.getElementById('sttLim').value }), '음성 인식 설정을 저장했어요');
       };
       var pv = {};
       each('[data-pv]', function (b) {
