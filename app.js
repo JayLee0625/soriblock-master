@@ -32,12 +32,7 @@
   };
   // 블록 세 개가 쌓이는 로고
   function logo(sz, anim) {
-    return '<svg class="logo' + (anim ? ' anim' : '') + '" width="' + sz + '" height="' + sz + '" viewBox="0 0 64 64" aria-hidden="true">' +
-      '<rect width="64" height="64" rx="16" fill="var(--main)"/>' +
-      '<rect class="b b1" x="11" y="35" width="20" height="16" rx="4" fill="#fff"/>' +
-      '<rect class="b b2" x="33" y="35" width="20" height="16" rx="4" fill="#fff"/>' +
-      '<rect class="b b3" x="22" y="16" width="20" height="16" rx="4" fill="#E9A23B"/>' +
-      '</svg>';
+    return '<img class="logo' + (anim ? ' anim' : '') + '" src="icon-192.png" width="' + sz + '" height="' + sz + '" alt="" aria-hidden="true">';
   }
   // 오늘 목표를 채우면 찍히는 도장
   function stamp() {
