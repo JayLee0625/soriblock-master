@@ -3,27 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1E5246">
+<meta name="theme-color" content="#0F4CA8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="소리블록 마스터">
 <title>소리블록 마스터</title>
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="icon-180.png">
 <style>
 :root{
-  --bg:#F4F3EF;--card:#FFFFFF;--ink:#1B2B27;--sub:#5B6763;--mute:#9AA39F;--line:#E4E2DA;
-  --main:#1E5246;--main-soft:#E2EEEA;--amber:#E9A23B;--amber-soft:#FBF0DC;
-  --good:#2E9A6B;--good-soft:#E3F4EC;--warn:#C9811F;--warn-soft:#FBEFE0;--bad:#D64545;--bad-soft:#FBE7E7;
-  --chip:#ECEAE3;--shadow:0 1px 2px rgba(27,43,39,.06),0 6px 20px rgba(27,43,39,.06);
+  --bg:#F3F6FC;--card:#FFFFFF;--ink:#10203F;--sub:#55627C;--mute:#98A2B6;--line:#E0E7F2;
+  --main:#0F4CA8;--main-soft:#E3ECFA;--amber:#F26300;--amber-soft:#FFEADB;
+  --good:#2E9A6B;--good-soft:#E3F4EC;--warn:#C98A00;--warn-soft:#FFF5D1;--bad:#D64545;--bad-soft:#FBE7E7;
+  --chip:#E9EEF7;--shadow:0 1px 2px rgba(16,32,63,.06),0 6px 20px rgba(16,32,63,.07);
   --safe-b:env(safe-area-inset-bottom,0px);--safe-t:env(safe-area-inset-top,0px);
 }
 @media (prefers-color-scheme:dark){:root{
-  --bg:#101614;--card:#18211E;--ink:#E7EEEB;--sub:#A9B7B2;--mute:#6C7A75;--line:#26332F;
-  --main:#3C8A76;--main-soft:#1C2F2A;--amber:#F0B45A;--amber-soft:#3A2D17;
-  --good:#4CC28F;--good-soft:#173326;--warn:#E9A256;--warn-soft:#3A2A17;--bad:#F06A6A;--bad-soft:#3A1C1C;
-  --chip:#222C29;--shadow:none;
+  --bg:#0D1424;--card:#152035;--ink:#E6ECF7;--sub:#A7B3CA;--mute:#6A7792;--line:#233150;
+  --main:#5B95F0;--main-soft:#182A4A;--amber:#FF8A3D;--amber-soft:#3A2414;
+  --good:#4CC28F;--good-soft:#173326;--warn:#F2C230;--warn-soft:#3A3112;--bad:#F06A6A;--bad-soft:#3A1C1C;
+  --chip:#1D2944;--shadow:none;
 }}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Noto Sans KR","Malgun Gothic",sans-serif;font-size:16px;line-height:1.5}
@@ -41,7 +41,7 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--main)}
 .btn:active{transform:scale(.98)}
 .btn svg{width:20px;height:20px;flex:none}
 .btn.sec{background:var(--chip);color:var(--ink)}
-.btn.amber{background:var(--amber);color:#2A1E08}
+.btn.amber{background:var(--amber);color:#fff}
 .btn.bad{background:var(--bad)}
 .btn.sm{height:40px;padding:0 14px;border-radius:12px;font-size:14px;width:auto}
 .btn[disabled]{opacity:.45;pointer-events:none}
@@ -51,12 +51,11 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--main)}
 .small{font-size:13px}
 .center{text-align:center}
 .err{color:var(--bad);font-size:14px;min-height:20px;margin-top:8px}
-.logo{display:block}
-.logo .b{transform-box:fill-box;transform-origin:center bottom}
-.logo.anim .b{animation:drop .9s cubic-bezier(.3,1.4,.5,1) both}
-.logo.anim .b2{animation-delay:.12s}.logo.anim .b3{animation-delay:.24s}
+.logo{display:block;flex:none;border-radius:22%;background:#fff;box-shadow:0 1px 3px rgba(16,32,63,.12)}
+.logo.anim{animation:pop .8s cubic-bezier(.3,1.4,.5,1) both}
+@keyframes pop{from{transform:scale(.6);opacity:0}to{transform:none;opacity:1}}
 @keyframes drop{0%{transform:translateY(-14px);opacity:0}100%{transform:none;opacity:1}}
-@media (prefers-reduced-motion:reduce){.logo.anim .b{animation:none}}
+@media (prefers-reduced-motion:reduce){.logo.anim{animation:none}}
 /* entry */
 .entry{min-height:80vh;display:flex;flex-direction:column;justify-content:center;gap:14px}
 .entry h2{font-size:26px;margin:8px 0 0;letter-spacing:-.4px}
@@ -90,9 +89,9 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--main)}
 .hintline{font-size:18px;color:var(--sub);letter-spacing:.3px;min-height:27px;word-break:keep-all}
 .hintline .bl{display:inline-block;min-width:26px;border-bottom:2px solid var(--mute);margin:0 3px;height:18px;vertical-align:-2px}
 .micwrap{display:flex;flex-direction:column;align-items:center;gap:10px;margin:22px 0 4px}
-.mic{width:88px;height:88px;border-radius:50%;background:var(--main);color:#fff;display:grid;place-items:center;box-shadow:0 8px 24px rgba(30,82,70,.3);position:relative}
+.mic{width:88px;height:88px;border-radius:50%;background:var(--amber);color:#fff;display:grid;place-items:center;box-shadow:0 8px 24px rgba(242,99,0,.32);position:relative}
 .mic svg{width:38px;height:38px}
-.mic.rec{background:var(--bad)}
+.mic.rec{background:var(--bad);box-shadow:0 8px 24px rgba(214,69,69,.32)}
 .mic[disabled]{opacity:.7}
 .mic svg,.mic .spin{position:relative;z-index:1}
 .lvl{position:absolute;inset:0;border-radius:50%;background:rgba(255,255,255,.18);transition:transform .08s linear;pointer-events:none}
@@ -145,7 +144,7 @@ label.f{display:block;font-size:13px;font-weight:700;color:var(--sub);margin:12p
 .radio{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);flex:none;position:relative}
 .radio.on{border-color:var(--main)}
 .radio.on::after{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--main)}
-.modal{position:fixed;inset:0;background:rgba(8,14,12,.45);display:flex;align-items:flex-end;justify-content:center;z-index:50}
+.modal{position:fixed;inset:0;background:rgba(8,14,30,.45);display:flex;align-items:flex-end;justify-content:center;z-index:50}
 .modal .sheet{background:var(--card);width:100%;max-width:560px;border-radius:22px 22px 0 0;padding:22px 18px calc(22px + var(--safe-b));max-height:90vh;overflow:auto}
 .kbar{background:var(--warn-soft);color:var(--warn);border-radius:12px;padding:10px 12px;font-size:14px;font-weight:600;margin-bottom:12px;display:flex;gap:10px;align-items:center}
 .kbar a{color:var(--ink);white-space:nowrap}
@@ -159,6 +158,6 @@ label.f{display:block;font-size:13px;font-weight:700;color:var(--sub);margin:12p
 <body>
 <div id="app"></div>
 <script src="config.js"></script>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
