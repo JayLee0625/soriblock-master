@@ -692,11 +692,23 @@
     var st = AD.settings || {};
     if (S.tab === 'sen') {
       h += '<div class="card"><b>문장 파일 올리기</b><div class="small muted" style="margin:4px 0 10px">엑셀(.xlsx)이나 CSV 파일을 올려요. 파일에 들어 있는 PART는 통째로 새 내용으로 바뀌고, 다른 PART는 그대로예요.</div>' +
-        '<label for="ff" class="btn">파일 고르기</label><input id="ff" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">' +
+        '<label for="ff" class="btn">파일 고르기 (여러 개 가능)</label><input id="ff" type="file" multiple accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">' +
         '<div class="small muted" style="margin-top:10px">열 이름: ID · 단계 · PART · 핵심표현 · 그룹 · 한글 · 영어 · 다른정답 · 공개<br>다른정답이 여러 개면 / 로 나눠 주세요. 공개에 N을 쓰면 코치에게 안 보여요.</div></div>';
       if (!AD.parts.length) h += '<div class="card empty">아직 올린 문장이 없어요.</div>';
+      // AI 음성 한꺼번에 만들기: 음성이 모자란 PART만 고를 수 있어요
+      var genOk = function (p) { return AD.hasKey && p.voiced < p.count; }, need = AD.parts.filter(genOk);
+      S.gsel = S.gsel || {};
+      Object.keys(S.gsel).forEach(function (k) { if (!need.some(function (p) { return p.key === k; })) delete S.gsel[k]; });
+      if (need.length) {
+        var gst = []; need.forEach(function (p) { var x = String(p.stage); if (gst.indexOf(x) < 0) gst.push(x); });
+        h += '<div class="card"><b>AI 음성 한꺼번에 만들기</b><div class="small muted" style="margin:4px 0 10px">음성이 없는 PART ' + need.length + '개를 고를 수 있어요. 아래 목록에서 체크하거나 빠른 선택을 눌러 주세요.</div>' +
+          '<div class="row" style="flex-wrap:wrap;justify-content:flex-start;gap:6px"><button class="chip" data-gq="all">전체</button>' +
+          (gst.length > 1 ? gst.map(function (x) { return '<button class="chip" data-gq="' + esc(x) + '">' + esc(x) + '단계 전체</button>'; }).join('') : '') +
+          '<button class="chip" data-gq="none">선택 해제</button></div>' +
+          '<button class="btn" id="genSel" style="margin-top:12px">선택한 PART 음성 만들기</button><div class="small muted center" id="gsum" style="margin-top:6px"></div></div>';
+      }
       AD.parts.forEach(function (p) {
-        h += '<div class="card"><b>' + esc(partName(p)) + '</b><div class="small muted">' + p.count + '문장' + (p.hidden ? ' (숨김 ' + p.hidden + ')' : '') + ' · AI 음성 ' + p.voiced + '/' + p.count + '</div>' +
+        h += '<div class="card">' + (genOk(p) ? '<label class="swrow" style="padding:0"><input type="checkbox" data-gs="' + esc(p.key) + '"' + (S.gsel[p.key] ? ' checked' : '') + '><b>' + esc(partName(p)) + '</b></label>' : '<b>' + esc(partName(p)) + '</b>') + '<div class="small muted">' + p.count + '문장' + (p.hidden ? ' (숨김 ' + p.hidden + ')' : '') + ' · AI 음성 ' + p.voiced + '/' + p.count + '</div>' +
           '<div class="tags">' + p.exprs.map(function (x) { return '<span class="tag">' + esc(x) + '</span>'; }).join('') + '</div>' +
           '<div class="row" style="margin-top:12px;flex-wrap:wrap;justify-content:flex-start"><button class="btn sm" style="flex:none" data-gen="' + esc(p.key) + '"' + (AD.hasKey && p.voiced < p.count ? '' : ' disabled') + '>' + (p.voiced < p.count ? 'AI 음성 만들기' : 'AI 음성 다 있어요') + '</button>' +
           '<button class="btn sm sec" style="flex:none" data-del="' + esc(p.key) + '">삭제</button></div></div>';
@@ -733,9 +745,34 @@
     each('[data-t]', function (b) { b.onclick = function () { S.tab = b.getAttribute('data-t'); render(); }; });
     function done(p, msg) { return p.then(function (d) { if (d && d.parts) AD = d; if (msg) toast(msg); render(); }).catch(function (e) { toast(e.message, 4000); }); }
     if (S.tab === 'sen') {
-      document.getElementById('ff').onchange = function (e) { var f = e.target.files[0]; e.target.value = ''; if (f) importFile(f); };
+      document.getElementById('ff').onchange = function (e) { var fs = Array.prototype.slice.call(e.target.files || []); e.target.value = ''; if (fs.length) importFiles(fs); };
+      var gbtn = document.getElementById('genSel');
+      function gsync() {
+        if (!gbtn) return;
+        var ks = Object.keys(S.gsel), n = 0;
+        AD.parts.forEach(function (p) { if (S.gsel[p.key]) n += p.count - p.voiced; });
+        gbtn.disabled = !ks.length;
+        gbtn.textContent = ks.length ? '선택한 ' + ks.length + '개 PART 음성 만들기' : 'PART를 골라 주세요';
+        document.getElementById('gsum').textContent = ks.length ? '만들 문장 ' + n.toLocaleString('ko-KR') + '개' : '';
+        each('[data-gs]', function (c) { c.checked = !!S.gsel[c.getAttribute('data-gs')]; });
+      }
+      each('[data-gs]', function (c) { c.onchange = function () { var k = c.getAttribute('data-gs'); if (c.checked) S.gsel[k] = 1; else delete S.gsel[k]; gsync(); }; });
+      each('[data-gq]', function (b) {
+        b.onclick = function () {
+          var q = b.getAttribute('data-gq'); S.gsel = {};
+          if (q !== 'none') AD.parts.forEach(function (p) { if (AD.hasKey && p.voiced < p.count && (q === 'all' || String(p.stage) === q)) S.gsel[p.key] = 1; });
+          gsync();
+        };
+      });
+      if (gbtn) {
+        gsync();
+        gbtn.onclick = function () {
+          var ks = AD.parts.filter(function (p) { return S.gsel[p.key]; }).map(function (p) { return p.key; });
+          if (ks.length) genQueue(ks);
+        };
+      }
       each('[data-del]', function (b) { b.onclick = function () { var k = b.getAttribute('data-del'); confirmBox(k.replace('-', '단계 PART ') + ' 문장을 모두 삭제할까요? AI 음성도 같이 지워져요. (연습 기록은 남아요)', '삭제', function () { done(call('adminDeletePart', { pin: S.pin, key: k }), '삭제했어요'); }); }; });
-      each('[data-gen]', function (b) { b.onclick = function () { generate(b.getAttribute('data-gen')); }; });
+      each('[data-gen]', function (b) { b.onclick = function () { genQueue([b.getAttribute('data-gen')]); }; });
     } else if (S.tab === 'tts') {
       document.getElementById('saveKey').onclick = function () { var k = document.getElementById('key').value.trim(); if (k) done(call('adminSetKey', { pin: S.pin, key: k }), '키를 저장했어요'); };
       each('[data-vs]', function (b) { b.onclick = function () { each('[data-vs]', function (x) { x.classList.remove('on'); }); b.classList.add('on'); }; });
@@ -772,26 +809,62 @@
     m.querySelector('#c0').onclick = function () { m.remove(); };
     m.querySelector('#c1').onclick = function () { m.remove(); fn(); };
   }
-  function generate(key) {
-    var m = document.createElement('div'); m.className = 'modal';
-    m.innerHTML = '<div class="sheet"><b>AI 음성 만드는 중</b><div class="prog"><i id="pg" style="width:0"></i></div><div class="small muted" id="pt">준비 중… (문장이 많으면 몇 분 걸려요. 화면을 켜 두세요)</div><div class="err" id="pe"></div><button class="btn sec" id="pclose" style="margin-top:10px;display:none">닫기</button></div>';
+  // 여러 PART의 AI 음성을 차례로 만들어요. 멈추거나 끊겨도 다시 누르면 남은 문장만 이어서 만들어요.
+  function keepAwake(on) {
+    try {
+      if (on) { if (navigator.wakeLock && !keepAwake.l) navigator.wakeLock.request('screen').then(function (l) { keepAwake.l = l; l.addEventListener('release', function () { keepAwake.l = null; }); }).catch(function () { }); }
+      else if (keepAwake.l) { keepAwake.l.release(); keepAwake.l = null; }
+    } catch (e) { }
+  }
+  function genQueue(keys) {
+    var info = {}; (AD && AD.parts || []).forEach(function (p) { info[p.key] = p; });
+    var many = keys.length > 1, m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = '<div class="sheet"><b id="gtt">AI 음성 만드는 중</b>' +
+      '<div class="small" id="gpn" style="margin-top:8px;font-weight:700"></div><div class="prog"><i id="pg" style="width:0"></i></div><div class="small muted" id="pt">준비 중…</div>' +
+      (many ? '<div class="small muted" style="margin-top:12px">전체 진행</div><div class="prog"><i id="pga" style="width:0"></i></div><div class="small muted" id="pta"></div>' : '') +
+      '<div class="small muted" id="gnote" style="margin-top:10px">문장이 많으면 오래 걸려요. 끝날 때까지 이 화면을 켜 두세요.</div><div class="err" id="pe"></div>' +
+      '<div class="row" style="margin-top:10px"><button class="btn sec" id="pstop">멈추기</button><button class="btn sec" id="pclose" style="display:none">닫기</button></div></div>';
     document.body.appendChild(m);
-    var pg = m.querySelector('#pg'), pt = m.querySelector('#pt'), pe = m.querySelector('#pe'), errs = [];
-    function step() {
-      call('adminGenerate', { pin: S.pin, key: key }).then(function (d) {
-        var dn = d.total - d.remaining;
-        pg.style.width = Math.round(dn / Math.max(1, d.total) * 100) + '%';
-        pt.textContent = dn + ' / ' + d.total + ' 문장';
-        (d.errors || []).forEach(function (e) { errs.push(e); });
-        if (d.remaining > 0 && !d.stop) step();
-        else {
-          pt.textContent = d.remaining ? '일부 음성을 만들지 못했어요. 다시 누르면 남은 것만 이어서 만들어요.' : '다 만들었어요! (' + d.total + '문장)';
-          if (errs.length) pe.textContent = errs.slice(0, 3).join(' / ');
-          m.querySelector('#pclose').style.display = ''; adminLoad();
-        }
-      }).catch(function (e) { pe.textContent = e.message + ' — 다시 누르면 남은 것만 이어서 만들어요.'; m.querySelector('#pclose').style.display = ''; });
+    var $ = function (id) { return m.querySelector('#' + id); }, errs = [], i = 0, stopReq = false, retry = 0, run = true;
+    var doneBy = {}; keys.forEach(function (k) { doneBy[k] = (info[k] && info[k].voiced) || 0; });
+    var all = keys.reduce(function (a, k) { return a + ((info[k] && info[k].count) || 0); }, 0);
+    function name(k) { return k.replace('-', '단계 PART '); }
+    function paint(k, total) {
+      $('gpn').textContent = (many ? 'PART ' + (i + 1) + '/' + keys.length + ' · ' : '') + name(k);
+      $('pg').style.width = Math.round(doneBy[k] / Math.max(1, total) * 100) + '%';
+      $('pt').textContent = doneBy[k] + ' / ' + total + ' 문장';
+      if (many) { var d = 0; keys.forEach(function (x) { d += doneBy[x]; }); $('pga').style.width = Math.round(d / Math.max(1, all) * 100) + '%'; $('pta').textContent = d + ' / ' + all + ' 문장'; }
     }
-    m.querySelector('#pclose').onclick = function () { m.remove(); render(); };
+    function finish(msg) {
+      run = false; keepAwake(false); window.onbeforeunload = null; $('gtt').textContent = 'AI 음성 만들기'; $('gnote').style.display = 'none';
+      var left = keys.filter(function (k) { return !info[k] || doneBy[k] < info[k].count; });
+      $('pt').textContent = msg || (left.length ? '일부 음성을 만들지 못했어요. 다시 누르면 남은 문장만 이어서 만들어요.' : '다 만들었어요! (' + (many ? keys.length + '개 PART' : (info[keys[0]] ? info[keys[0]].count + '문장' : '')) + ')');
+      if (left.length && left.length < keys.length) $('pt').textContent += ' 남은 PART: ' + left.map(name).join(', ');
+      if (errs.length) $('pe').textContent = errs.slice(0, 3).join(' / ');
+      $('pstop').style.display = 'none'; $('pclose').style.display = ''; adminLoad();
+    }
+    function step() {
+      if (stopReq) return finish('멈췄어요. 다시 누르면 남은 문장만 이어서 만들어요.');
+      if (i >= keys.length) return finish();
+      var k = keys[i];
+      if (info[k]) paint(k, info[k].count);
+      call('adminGenerate', { pin: S.pin, key: k }).then(function (d) {
+        retry = 0;
+        info[k] = info[k] || { count: d.total }; info[k].count = d.total; doneBy[k] = d.total - d.remaining;
+        paint(k, d.total);
+        (d.errors || []).forEach(function (e) { errs.push(e); });
+        if (d.stop) return finish('음성을 만들지 못해서 멈췄어요. 아래 오류를 확인해 주세요. (키·결제 상태 등)');
+        if (d.remaining <= 0) i++;
+        step();
+      }).catch(function (e) {
+        if (run && retry < 1 && !stopReq) { retry++; setTimeout(step, 3000); return; }
+        errs.push(e.message); finish('연결이 끊겨서 멈췄어요. 다시 누르면 남은 문장만 이어서 만들어요.');
+      });
+    }
+    $('pstop').onclick = function () { stopReq = true; $('pstop').disabled = true; $('pstop').textContent = '지금 묶음이 끝나면 멈춰요…'; };
+    $('pclose').onclick = function () { m.remove(); render(); };
+    keepAwake(true); window.onbeforeunload = function () { return '음성을 만드는 중이에요.'; };
+    document.addEventListener('visibilitychange', function () { if (run && document.visibilityState === 'visible') keepAwake(true); });
     step();
   }
 
@@ -871,27 +944,91 @@
     return rows.slice(hi + 1).map(function (r) { return idx.map(function (j) { return j < 0 ? '' : String(r[j] == null ? '' : r[j]).trim(); }); })
       .filter(function (r) { return r[5] || r[6]; });
   }
-  function importFile(f) {
+  function readRecs(f) {
     var isX = /\.xlsx$/i.test(f.name);
-    (isX ? f.arrayBuffer().then(readXlsx) : f.text().then(parseCsv)).then(toRecords).then(function (recs) {
-      if (!recs.length) throw new Error('문장이 없어요.');
-      var parts = {}; recs.forEach(function (r) { var k = r[1] + '단계 PART ' + (/^\d$/.test(r[2]) ? '0' + r[2] : r[2]); parts[k] = (parts[k] || 0) + 1; });
-      var m = document.createElement('div'); m.className = 'modal';
-      m.innerHTML = '<div class="sheet"><b>' + esc(f.name) + '</b><div class="small muted" style="margin:6px 0 10px">' + recs.length + '문장 · ' + Object.keys(parts).map(function (k) { return esc(k) + ' (' + parts[k] + ')'; }).join(', ') + '</div>' +
-        '<div class="small" style="background:var(--bg);border-radius:12px;padding:10px">예: ' + esc(recs[0][5]) + '<br><b>' + esc(recs[0][6]) + '</b></div>' +
-        '<p class="small muted">같은 PART에 이미 있던 문장은 이 파일 내용으로 바뀌어요. 영어가 그대로인 문장은 AI 음성을 다시 만들지 않아요.</p><div class="err" id="ie"></div>' +
-        '<div class="row"><button class="btn sec" id="i0">취소</button><button class="btn" id="i1">올리기</button></div></div>';
+    return (isX ? f.arrayBuffer().then(readXlsx) : f.text().then(parseCsv)).then(toRecords);
+  }
+  // 파일 여러 개를 읽어서 PART별로 나눈 뒤, 고른 PART만 차례로 올려요
+  function importFiles(files) {
+    Promise.all(files.map(function (f) { return readRecs(f).then(function (r) { return { f: f, recs: r }; }, function (e) { return { f: f, err: e.message }; }); })).then(function (list) {
+      var G = {}, order = [], bad = [], have = {};
+      ((AD && AD.parts) || []).forEach(function (p) { have[p.key] = 1; });
+      list.forEach(function (x) {
+        if (x.err) return bad.push(x.f.name + ': ' + x.err);
+        if (!x.recs.length) return bad.push(x.f.name + ': 문장이 없어요.');
+        x.recs.forEach(function (r) {
+          var p2 = String(r[2]).trim(), k = String(r[1]).trim() + '-' + (/^\d$/.test(p2) ? '0' + p2 : p2);
+          if (!G[k]) { G[k] = { key: k, stage: String(r[1]).trim(), rows: [], files: [] }; order.push(k); }
+          G[k].rows.push(r); if (G[k].files.indexOf(x.f.name) < 0) G[k].files.push(x.f.name);
+        });
+      });
+      order.sort(function (a, b) { var A = a.split('-'), B = b.split('-'); return ((parseFloat(A[0]) || 0) - (parseFloat(B[0]) || 0)) || String(A[1]).localeCompare(String(B[1]), 'ko', { numeric: true }); });
+      if (!order.length) { toast(bad.length ? bad.slice(0, 3).join(' / ') : '올릴 문장이 없어요.', 6000); return; }
+      var sel = {}; order.forEach(function (k) { sel[k] = 1; });
+      var stages = []; order.forEach(function (k) { if (stages.indexOf(G[k].stage) < 0) stages.push(G[k].stage); });
+      var nm = function (k) { return k.split('-')[0] + '단계 PART ' + k.split('-')[1]; }, total = order.reduce(function (a, k) { return a + G[k].rows.length; }, 0);
+      var first = G[order[0]].rows[0], m = document.createElement('div'); m.className = 'modal';
+      m.innerHTML = '<div class="sheet"><b>파일 ' + list.length + '개 · PART ' + order.length + '개 · ' + total + '문장</b>' +
+        (bad.length ? '<div class="err">읽지 못한 파일: ' + bad.map(esc).join('<br>') + '</div>' : '') +
+        '<div class="small" style="background:var(--bg);border-radius:12px;padding:10px;margin-top:10px">예: ' + esc(first[5]) + '<br><b>' + esc(first[6]) + '</b></div>' +
+        (order.length > 1 ? '<div class="row" style="flex-wrap:wrap;justify-content:flex-start;gap:6px;margin-top:12px"><button class="chip" data-iq="all">전체</button>' +
+          (stages.length > 1 ? stages.map(function (x) { return '<button class="chip" data-iq="' + esc(x) + '">' + esc(x) + '단계만</button>'; }).join('') : '') + '<button class="chip" data-iq="none">선택 해제</button></div>' : '') +
+        '<div id="ilist" style="margin-top:8px">' + order.map(function (k) {
+          return '<label class="swrow" style="align-items:flex-start;border-bottom:1px solid var(--line);padding:9px 0"><input type="checkbox" data-ik="' + esc(k) + '" checked style="flex:none;margin-top:2px"><span style="flex:1"><b>' + esc(nm(k)) + '</b> <span class="small muted" style="font-weight:400">' + G[k].rows.length + '문장</span>' +
+            (have[k] ? ' <span class="tag" style="background:var(--chip);color:var(--warn)">이미 있음 · 새 내용으로 바뀜</span>' : '') +
+            '<br><span class="small muted" style="font-weight:400">' + esc(G[k].files.join(', ')) + '</span></span></label>';
+        }).join('') + '</div>' +
+        '<p class="small muted">같은 PART에 이미 있던 문장은 이 파일 내용으로 바뀌어요. 영어가 그대로인 문장은 AI 음성을 다시 만들지 않아요.</p>' +
+        '<div class="small center" id="isum" style="font-weight:700"></div><div class="prog" id="iprog" style="display:none"><i id="ipg" style="width:0"></i></div><div class="small muted" id="ipt"></div><div class="err" id="ie"></div>' +
+        '<div class="row"><button class="btn sec" id="i0">취소</button><button class="btn" id="i1"></button></div></div>';
       document.body.appendChild(m);
-      var ie = m.querySelector('#ie'), b1 = m.querySelector('#i1'), force = false;
-      m.querySelector('#i0').onclick = function () { m.remove(); };
-      b1.onclick = function () {
-        b1.disabled = true; b1.textContent = '올리는 중…';
-        call('adminImport', { pin: S.pin, rows: recs, ignoreProblems: force }).then(function (d) {
-          if (d.problems) { force = true; b1.disabled = false; b1.textContent = '문제 있는 줄은 빼고 올리기'; ie.innerHTML = esc(d.problemCount + '줄에 문제가 있어요: ') + d.problems.slice(0, 5).map(esc).join('<br>'); return; }
-          AD = d.state; m.remove(); toast(d.imported + '문장을 올렸어요'); render();
-        }).catch(function (e) { b1.disabled = false; b1.textContent = '올리기'; ie.textContent = e.message; });
-      };
-    }).catch(function (e) { toast(e.message, 5000); });
+      var $ = function (id) { return m.querySelector('#' + id); }, b1 = $('i1'), busy = false, todo = null, force = false, okN = 0, okRows = 0, upK = {};
+      function sync() {
+        Array.prototype.forEach.call(m.querySelectorAll('[data-ik]'), function (c) { c.checked = !!sel[c.getAttribute('data-ik')]; });
+        var ks = order.filter(function (k) { return sel[k]; }), n = ks.reduce(function (a, k) { return a + G[k].rows.length; }, 0);
+        b1.disabled = !ks.length; b1.textContent = ks.length ? (order.length > 1 ? ks.length + '개 올리기' : '올리기') : '골라 주세요';
+        $('isum').textContent = order.length > 1 ? (ks.length ? '선택: PART ' + ks.length + '개 · ' + n.toLocaleString('ko-KR') + '문장' : '올릴 PART를 골라 주세요') : '';
+      }
+      Array.prototype.forEach.call(m.querySelectorAll('[data-ik]'), function (c) { c.onchange = function () { var k = c.getAttribute('data-ik'); if (c.checked) sel[k] = 1; else delete sel[k]; sync(); }; });
+      Array.prototype.forEach.call(m.querySelectorAll('[data-iq]'), function (b) { b.onclick = function () { if (busy) return; var q = b.getAttribute('data-iq'); sel = {}; if (q !== 'none') order.forEach(function (k) { if (q === 'all' || G[k].stage === q) sel[k] = 1; }); sync(); }; });
+      $('i0').onclick = function () { m.remove(); if (okN) render(); };
+      function lock(on) { busy = on; Array.prototype.forEach.call(m.querySelectorAll('input,.chip'), function (x) { x.disabled = on; }); b1.disabled = on; $('i0').disabled = on; }
+      function run(keys) {
+        var probs = [], fails = [], j = 0, retry = 0;
+        lock(true); $('iprog').style.display = ''; $('ie').innerHTML = '';
+        function next() {
+          $('ipg').style.width = Math.round(j / keys.length * 100) + '%';
+          if (j >= keys.length) return end();
+          var k = keys[j];
+          $('ipt').textContent = (keys.length > 1 ? 'PART ' + (j + 1) + '/' + keys.length + ' · ' : '') + nm(k) + ' 올리는 중…';
+          call('adminImport', { pin: S.pin, rows: G[k].rows, ignoreProblems: force }).then(function (d) {
+            retry = 0;
+            if (d.problems) probs.push({ k: k, d: d });
+            else { AD = d.state; okN++; okRows += d.imported; delete sel[k]; upK[k] = 1; }
+            j++; next();
+          }).catch(function (e) {
+            if (retry < 1) { retry++; setTimeout(next, 2000); return; }
+            retry = 0; fails.push(nm(k) + ': ' + e.message); j++; next();
+          });
+        }
+        function end() {
+          lock(false); $('i0').textContent = '닫기';
+          Array.prototype.forEach.call(m.querySelectorAll('[data-ik]'), function (c) { var k = c.getAttribute('data-ik'); if (upK[k]) { c.checked = false; c.disabled = true; var b = c.parentNode.querySelector('b'); if (b && !/올렸어요/.test(b.textContent)) b.textContent += ' · 올렸어요'; } });
+          $('ipt').textContent = okN ? '지금까지 PART ' + okN + '개 · ' + okRows + '문장을 올렸어요.' : '';
+          var html = '';
+          if (probs.length) html += probs.map(function (x) { return esc(nm(x.k) + ' — ' + x.d.problemCount + '줄에 문제가 있어요: ') + x.d.problems.slice(0, 3).map(esc).join(' / '); }).join('<br>');
+          if (fails.length) html += (html ? '<br>' : '') + '올리지 못한 PART: ' + fails.map(esc).join('<br>');
+          $('ie').innerHTML = html;
+          todo = probs.map(function (x) { return x.k; }).concat(fails.length ? keys.filter(function (k) { return sel[k] && probs.every(function (x) { return x.k !== k; }); }) : []);
+          force = probs.length > 0;
+          if (todo.length) { b1.disabled = false; b1.textContent = probs.length ? '문제 줄 빼고 올리기' : '못 올린 것 다시 올리기'; $('isum').textContent = '다시 올릴 PART ' + todo.length + '개'; }
+          else { m.remove(); toast(okN > 1 ? 'PART ' + okN + '개 · ' + okRows + '문장을 올렸어요' : okRows + '문장을 올렸어요'); render(); }
+        }
+        next();
+      }
+      b1.onclick = function () { if (busy) return; if (todo && todo.length) return run(todo); run(order.filter(function (k) { return sel[k]; })); };
+      sync();
+    });
   }
 
   // ---------- 시작 ----------
