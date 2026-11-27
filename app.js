@@ -121,7 +121,21 @@
       '<div class="bar"><i style="width:' + Math.min(100, Math.round(H.today / Math.max(1, H.goal) * 100)) + '%;background:var(--amber)"></i></div></div>' + (done ? stamp() : '') + '</div>';
     if (done) h += '<button class="btn sec" id="cert" style="margin:-4px 0 14px">인증 문구 복사</button>';
     if (!H.parts.length) h += '<div class="card empty">아직 올라온 문장이 없어요.</div>';
-    H.parts.forEach(function (p) {
+    // 단계 탭: 고른 단계의 PART만 보여 주고, 고른 단계는 기기에 기억해 둬요
+    var stages = [];
+    H.parts.forEach(function (p) { var s = String(p.stage); if (stages.indexOf(s) < 0) stages.push(s); });
+    stages.sort(function (a, b) { return (parseFloat(a) || 0) - (parseFloat(b) || 0); });
+    var st = S.stage || ls('stage');
+    if (stages.indexOf(st) < 0) st = stages[0];
+    S.stage = st;
+    if (stages.length > 1) {
+      h += '<div class="tabs stagetabs" role="tablist">' + stages.map(function (s) {
+        var ok = 0, cnt = 0;
+        H.parts.forEach(function (p) { if (String(p.stage) === s) { ok += p.ok; cnt += p.count; } });
+        return '<button role="tab" data-st="' + esc(s) + '" class="' + (s === st ? 'on' : '') + '" aria-selected="' + (s === st) + '">' + esc(s) + '단계 <small style="opacity:.8;font-weight:600">' + Math.round(ok / Math.max(1, cnt) * 100) + '%</small></button>';
+      }).join('') + '</div>';
+    }
+    H.parts.filter(function (p) { return String(p.stage) === st; }).forEach(function (p) {
       h += '<button class="card part" data-p="' + esc(p.key) + '"><h3>' + esc(partName(p)) + '</h3>' +
         '<div class="small muted">' + p.count + '문장 · 맞힌 문장 ' + p.ok + (p.wrong ? ' · 다시 볼 문장 ' + p.wrong : '') + '</div>' +
         '<div class="tags">' + p.exprs.slice(0, 6).map(function (x) { return '<span class="tag">' + esc(x) + '</span>'; }).join('') + '</div>' +
@@ -131,6 +145,7 @@
     document.getElementById('out').onclick = function () { S.coach = ''; S.home = null; S.part = null; S.sess = null; go('entry'); };
     if (done) document.getElementById('cert').onclick = copyCert;
     each('[data-p]', function (b) { b.onclick = function () { openPart(b.getAttribute('data-p')); }; });
+    each('[data-st]', function (b) { b.onclick = function () { S.stage = b.getAttribute('data-st'); ls('stage', S.stage); render(); }; });
   }
   function certText() { var H = S.home || {}; return '[소리블록 마스터] ' + S.coach + ' · ' + todayStr() + ' 오늘 ' + H.today + '문장 연습 완료 ✅ (목표 ' + H.goal + '문장)'; }
   function copyCert() {
